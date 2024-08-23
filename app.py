@@ -31,8 +31,6 @@ def lambda_handler(event, context):
         {'arn': 'arn:aws:iam::389812040165:role/IN-Cross-Account-Inventory-Role-CCS-AWS-GlobalRapid', 'name': 'Global Rapid Account', 'regions': ['ap-south-1']},
         {'arn': 'arn:aws:iam::381492018207:role/IN-Cross-Account-Inventory-Role-Engage-Account', 'name': 'Engage - Digo', 'regions': ['ap-south-1']},
         {'arn':'arn:aws:iam::992382722583:role/IN-Cross-Account-Inventory-Role-N8N-Account', 'name': 'N8N Account', 'regions': ['ap-south-1']},
-        {'arn':'arn:aws:iam::851725304866:role/Inventory-report-role', 'name': 'MMX3 Non-Prod', 'regions': ['us-west-2','us-east-2']},
-        {'arn':'arn:aws:iam::891376950881:role/Inventory-role', 'name': 'MMX3 Prod', 'regions': ['us-west-2','us-east-2']},
 
     ]
 
@@ -83,7 +81,7 @@ def lambda_handler(event, context):
             igw_data = parse_igws(ec2_client)
             ec2_data = parse_ec2_instances_data(instances, region)
             enis_data = parse_enis_data(ec2_client, region)
-            s3_data = parse_s3_data(s3_buckets, region)
+            s3_data = parse_s3_data(s3_client, region)
             rds_data = parse_rds_data(session.client('rds', region_name=region), region)
             eks_data = parse_eks_data(session.client('eks', region_name=region), region)
             lambda_data = parse_lambda_data(lambda_client, region)
@@ -145,11 +143,35 @@ def parse_enis_data(ec2_client, region):
         data.append([region, eni_id, eni_name, private_ip, public_ip])
     return data
 
-def parse_s3_data(s3_buckets, region):
+def parse_s3_data(s3_client, region):
     data = []
-    for bucket in s3_buckets['Buckets']:
+    for bucket in s3_client.list_buckets()['Buckets']:
         bucket_name = bucket['Name']
-        data.append([region, bucket_name, bucket_name])
+        try:
+            # Get bucket location
+            location = s3_client.get_bucket_location(Bucket=bucket_name)['LocationConstraint']
+            # If location is None, it's in us-east-1
+            bucket_region = location if location else 'us-east-1'
+            
+            # Only process buckets in the current region
+            if bucket_region == region:
+                # Get bucket size
+                size_bytes = sum(obj['Size'] for obj in s3_client.list_objects_v2(Bucket=bucket_name).get('Contents', []))
+                
+                # Convert to MB
+                size_mb = size_bytes / (1024 ** 2)
+                
+                # If size is greater than 1024 MB, convert to GB
+                if size_mb > 1024:
+                    size_gb = size_mb / 1024
+                    size_str = f"{size_gb:.2f} GB"
+                else:
+                    size_str = f"{size_mb:.2f} MB"
+                
+                data.append([region, bucket_name, size_str])
+        except Exception as e:
+            logging.error(f"Error processing bucket {bucket_name}: {str(e)}")
+            data.append([region, bucket_name, "Error"])
     return data
 
 def parse_rds_data(rds_client, region):
@@ -400,7 +422,7 @@ def write_data_to_sheet(worksheet, ec2_data, enis_data, s3_data, rds_data, eks_d
 
     # S3 Buckets
     write_section('S3 Buckets',
-                  ['Region', 'S3 Bucket ID', 'S3 Name'],
+                  ['Region', 'S3 Bucket Name', 'Size'],
                   s3_data)
 
     # RDS Instances
