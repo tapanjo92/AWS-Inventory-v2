@@ -75,6 +75,14 @@ def lambda_handler(event, context):
             athena_client = session.client('athena', region_name=region)
             sns_client = session.client('sns', region_name=region)
             sqs_client = session.client('sqs', region_name=region)
+            cloudfront_client = session.client('cloudfront')
+            dynamodb_client = session.client('dynamodb')
+            elasticache_client = session.client('elasticache')
+            redshift_client = session.client('redshift')
+            emr_client = session.client('emr')
+            kinesis_client = session.client('kinesis')
+            apigateway_client = session.client('apigateway')
+            cloudwatch_client = session.client('cloudwatch')
 
             vpc_data = parse_vpcs(ec2_client)
             subnet_data = parse_subnets(ec2_client)
@@ -99,11 +107,18 @@ def lambda_handler(event, context):
             igw_data = parse_igws(ec2_client)
             sagemaker_data = parse_sagemaker(session.client('sagemaker', region_name=region))
             vpc_endpoints_data = parse_vpc_endpoints(ec2_client)
-            
+            cloudfront_data = parse_cloudfront_data(cloudfront_client)
+            dynamodb_data = parse_dynamodb_data(dynamodb_client, region)
+            elasticache_data = parse_elasticache_data(elasticache_client, region)
+            redshift_data = parse_redshift_data(redshift_client, region)
+            emr_data = parse_emr_data(emr_client, region)
+            kinesis_data = parse_kinesis_data(kinesis_client, region)
+            apigateway_data = parse_apigateway_data(apigateway_client, region)
+            cloudwatch_data = parse_cloudwatch_data(cloudwatch_client, region)
 
             worksheet_name = account['name']
             worksheet = workbook.add_worksheet(f"{worksheet_name}_{region}")
-            write_data_to_sheet(worksheet, ec2_data, enis_data, s3_data, rds_data, eks_data, lambda_data, elb_data, route53_data, tgw_data, tgw_attachments_data, athena_data, glue_data, efs_data, sns_data, sqs_data, vpc_data, subnet_data, igw_data, sagemaker_data, vpc_endpoints_data, workbook)
+            write_data_to_sheet(worksheet, ec2_data, enis_data, s3_data, rds_data, eks_data, lambda_data, elb_data, route53_data, tgw_data, tgw_attachments_data, athena_data, glue_data, efs_data, sns_data, sqs_data, vpc_data, subnet_data, igw_data, vpc_endpoints_data, sagemaker_data, cloudfront_data, dynamodb_data, elasticache_data, redshift_data, emr_data, kinesis_data, apigateway_data, cloudwatch_data, workbook)
 
 
     workbook.close()
@@ -396,7 +411,92 @@ def parse_sagemaker(sagemaker_client):
         data.append(['Global', notebook_name, instance_type, creation_time, status])
     return data
 
-def write_data_to_sheet(worksheet, ec2_data, enis_data, s3_data, rds_data, eks_data, lambda_data, elb_data, route53_data, tgw_data, tgw_attachments_data, athena_data, glue_data, efs_data, sns_data, sqs_data, vpc_data, subnet_data, igw_data, vpc_endpoints, sagemaker_data, workbook):
+def parse_cloudfront_data(cloudfront_client):
+    data = []
+    distributions = cloudfront_client.list_distributions()['DistributionList'].get('Items', [])
+    for dist in distributions:
+        dist_id = dist['Id']
+        domain_name = dist['DomainName']
+        enabled = dist['Enabled']
+        status = dist['Status']
+        data.append(['Global', dist_id, domain_name, enabled, status])
+    return data
+
+def parse_dynamodb_data(dynamodb_client, region):
+    data = []
+    tables = dynamodb_client.list_tables()['TableNames']
+    for table_name in tables:
+        table_info = dynamodb_client.describe_table(TableName=table_name)['Table']
+        status = table_info['TableStatus']
+        item_count = table_info['ItemCount']
+        size_bytes = table_info['TableSizeBytes']
+        data.append([region, table_name, status, item_count, size_bytes])
+    return data
+
+def parse_elasticache_data(elasticache_client, region):
+    data = []
+    clusters = elasticache_client.describe_cache_clusters()['CacheClusters']
+    for cluster in clusters:
+        cluster_id = cluster['CacheClusterId']
+        engine = cluster['Engine']
+        status = cluster['CacheClusterStatus']
+        node_type = cluster['CacheNodeType']
+        data.append([region, cluster_id, engine, status, node_type])
+    return data
+
+def parse_redshift_data(redshift_client, region):
+    data = []
+    clusters = redshift_client.describe_clusters()['Clusters']
+    for cluster in clusters:
+        cluster_id = cluster['ClusterIdentifier']
+        status = cluster['ClusterStatus']
+        node_type = cluster['NodeType']
+        num_nodes = cluster['NumberOfNodes']
+        data.append([region, cluster_id, status, node_type, num_nodes])
+    return data
+
+def parse_emr_data(emr_client, region):
+    data = []
+    clusters = emr_client.list_clusters()['Clusters']
+    for cluster in clusters:
+        cluster_id = cluster['Id']
+        name = cluster['Name']
+        status = cluster['Status']['State']
+        data.append([region, cluster_id, name, status])
+    return data
+
+def parse_kinesis_data(kinesis_client, region):
+    data = []
+    streams = kinesis_client.list_streams()['StreamNames']
+    for stream_name in streams:
+        stream_info = kinesis_client.describe_stream(StreamName=stream_name)['StreamDescription']
+        status = stream_info['StreamStatus']
+        shard_count = stream_info['Shards']
+        data.append([region, stream_name, status, len(shard_count)])
+    return data
+
+def parse_apigateway_data(apigateway_client, region):
+    data = []
+    apis = apigateway_client.get_rest_apis()['items']
+    for api in apis:
+        api_id = api['id']
+        name = api['name']
+        created_date = api['createdDate'].strftime('%Y-%m-%d %H:%M:%S')
+        data.append([region, api_id, name, created_date])
+    return data
+
+def parse_cloudwatch_data(cloudwatch_client, region):
+    data = []
+    alarms = cloudwatch_client.describe_alarms()['MetricAlarms']
+    for alarm in alarms:
+        alarm_name = alarm['AlarmName']
+        state = alarm['StateValue']
+        metric_name = alarm.get('MetricName', 'N/A')  # Use get() with a default value
+        namespace = alarm.get('Namespace', 'N/A')  # Also use get() for Namespace
+        data.append([region, alarm_name, state, metric_name, namespace])
+    return data
+
+def write_data_to_sheet(worksheet, ec2_data, enis_data, s3_data, rds_data, eks_data, lambda_data, elb_data, route53_data, tgw_data, tgw_attachments_data, athena_data, glue_data, efs_data, sns_data, sqs_data, vpc_data, subnet_data, igw_data, vpc_endpoints, sagemaker_data, cloudfront_data, dynamodb_data, elasticache_data, redshift_data, emr_data, kinesis_data, apigateway_data, cloudwatch_data, workbook):
     bold_light_blue = workbook.add_format({
         'bold': True, 
         'bg_color': '#ADD8E6',
@@ -530,6 +630,45 @@ def write_data_to_sheet(worksheet, ec2_data, enis_data, s3_data, rds_data, eks_d
     write_section('VPC Endpoints',
                   ['Scope', 'Endpoint ID', 'Service Name', 'VPC ID', 'Status'],
                   vpc_endpoints)
+    
+    write_section('CloudFront Distributions',
+                  ['Scope', 'Distribution ID', 'Domain Name', 'Enabled', 'Status'],
+                  cloudfront_data)
+
+    # DynamoDB Tables
+    write_section('DynamoDB Tables',
+                  ['Region', 'Table Name', 'Status', 'Item Count', 'Size (Bytes)'],
+                  dynamodb_data)
+
+    # ElastiCache Clusters
+    write_section('ElastiCache Clusters',
+                  ['Region', 'Cluster ID', 'Engine', 'Status', 'Node Type'],
+                  elasticache_data)
+
+    # Redshift Clusters
+    write_section('Redshift Clusters',
+                  ['Region', 'Cluster ID', 'Status', 'Node Type', 'Node Count'],
+                  redshift_data)
+
+    # EMR Clusters
+    write_section('EMR Clusters',
+                  ['Region', 'Cluster ID', 'Name', 'Status'],
+                  emr_data)
+
+    # Kinesis Streams
+    write_section('Kinesis Streams',
+                  ['Region', 'Stream Name', 'Status', 'Shard Count'],
+                  kinesis_data)
+
+    # API Gateway
+    write_section('API Gateway',
+                  ['Region', 'API ID', 'Name', 'Created Date'],
+                  apigateway_data)
+
+    # CloudWatch Alarms
+    write_section('CloudWatch Alarms',
+                  ['Region', 'Alarm Name', 'State', 'Metric Name', 'Namespace'],
+                  cloudwatch_data)
 
     # Adjust column widths
     for i in range(20):  # Assuming a maximum of 20 columns
