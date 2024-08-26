@@ -182,7 +182,22 @@ def parse_rds_data(rds_client, region):
         db_engine = db_instance['Engine']
         db_status = db_instance['DBInstanceStatus']
         db_endpoint = db_instance.get('Endpoint', {}).get('Address', 'N/A')
-        data.append([region, db_identifier, db_engine, db_status, db_endpoint])
+        
+        # Add node count for multi-AZ and Aurora clusters
+        if db_instance.get('MultiAZ', False):
+            node_count = 2  # Multi-AZ deployments have 2 nodes
+        elif 'aurora' in db_engine.lower():
+            # For Aurora, we need to get the cluster info
+            cluster_id = db_instance.get('DBClusterIdentifier')
+            if cluster_id:
+                cluster_info = rds_client.describe_db_clusters(DBClusterIdentifier=cluster_id)
+                node_count = len(cluster_info['DBClusters'][0]['DBClusterMembers'])
+            else:
+                node_count = 1  # Fallback if we can't determine the cluster size
+        else:
+            node_count = 1  # Single-AZ deployments have 1 node
+
+        data.append([region, db_identifier, db_engine, db_status, db_endpoint, node_count])
     return data
 
 def parse_eks_data(eks_client, region):
@@ -191,7 +206,15 @@ def parse_eks_data(eks_client, region):
     for cluster_name in eks_clusters['clusters']:
         cluster_info = eks_client.describe_cluster(name=cluster_name)
         cluster_status = cluster_info['cluster']['status']
-        data.append([region, cluster_name, cluster_status])
+        
+        # Get nodegroup information
+        nodegroups = eks_client.list_nodegroups(clusterName=cluster_name)['nodegroups']
+        total_nodes = 0
+        for nodegroup in nodegroups:
+            nodegroup_info = eks_client.describe_nodegroup(clusterName=cluster_name, nodegroupName=nodegroup)
+            total_nodes += nodegroup_info['nodegroup']['scalingConfig']['desiredSize']
+        
+        data.append([region, cluster_name, cluster_status, total_nodes])
     return data
 
 def parse_lambda_data(lambda_client, region):
@@ -425,14 +448,12 @@ def write_data_to_sheet(worksheet, ec2_data, enis_data, s3_data, rds_data, eks_d
                   ['Region', 'S3 Bucket Name', 'Size'],
                   s3_data)
 
-    # RDS Instances
     write_section('RDS Instances',
-                  ['Region', 'DB Instance ID', 'Engine', 'Status', 'Endpoint'],
+                  ['Region', 'DB Instance ID', 'Engine', 'Status', 'Endpoint', 'Node Count'],
                   rds_data)
 
-    # EKS Clusters
     write_section('EKS Clusters',
-                  ['Region', 'Cluster Name', 'Status'],
+                  ['Region', 'Cluster Name', 'Status', 'Node Count'],
                   eks_data)
 
     # Lambda Functions
