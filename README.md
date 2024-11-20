@@ -66,6 +66,7 @@ Follow these steps to deploy your Lambda function:
        --function-name v2-aws-all-inventory \
        --region ap-south-1
    ```
+## Make sure to add S3 put object in IAM along with read only in the account B
 
 ## Troubleshooting
 
